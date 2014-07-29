@@ -48,6 +48,7 @@ class Thoonk(object):
         lredis       -- A Redis connection for listening to publish events.
         port         -- The Redis server port.
         redis        -- The Redis connection instance.
+        poll         -- The pool of connections o Redis.
 
     Methods:
         close             -- Terminate the listening Redis connection.
@@ -65,7 +66,7 @@ class Thoonk(object):
         set_config        -- Set the configuration for a given feed.
     """
 
-    def __init__(self, host='localhost', port=6379, db=0, listen=False):
+    def __init__(self, host='localhost', port=6379, db=0, listen=False, pool=None):
         """
         Start a new Thoonk instance for creating and managing feeds.
 
@@ -80,7 +81,11 @@ class Thoonk(object):
         self.host = host
         self.port = port
         self.db = db
-        self.redis = redis.StrictRedis(host=self.host, port=self.port, db=self.db)
+        self.pool = pool
+        if self.pool:
+            self.redis = redis.StrictRedis(connection_pool=self.pool)
+        else:
+            self.redis = redis.StrictRedis(host=self.host, port=self.port, db=self.db)
         self._feeds = cache.FeedCache(self)
         self.instance = uuid.uuid4().hex
 
@@ -278,7 +283,10 @@ class ThoonkListener(threading.Thread):
         self.handlers = {}
         self.thoonk = thoonk
         self.ready = threading.Event()
-        self.redis = redis.StrictRedis(host=thoonk.host, port=thoonk.port, db=thoonk.db)
+        if thoonk.pool:
+            self.redis = redis.StrictRedis(connection_pool=thoonk.pool)
+        else:
+            self.redis = redis.StrictRedis(host=thoonk.host, port=thoonk.port, db=thoonk.db)
         self.finished = threading.Event()
         self.instance = thoonk.instance
         self._finish_channel = "listenerclose_%s" % self.instance
@@ -305,17 +313,21 @@ class ThoonkListener(threading.Thread):
 
         # subscribe to exist feeds retract and publish
         for feed in self.redis.smembers("feeds"):
-            self._pubsub.subscribe(self.thoonk._feeds[feed].get_channels())
+            # Some feeds may not implement the Thoonk protocol, skipping them.
+            try:
+                self._pubsub.subscribe(self.thoonk._feeds[feed].get_channels())
+            except:
+                pass
 
         self.ready.set()
         for event in self._pubsub.listen():
-            type = event.pop("type")
+            event_type = event.pop("type")
             if event["channel"] == self._finish_channel:
-                if self._pubsub.subscription_count:
+                if not self._pubsub.subscribed:
                     self._pubsub.unsubscribe()
-            elif type == 'message':
+            elif event_type == 'message':
                 self._handle_message(**event)
-            elif type == 'pmessage':
+            elif event_type == 'pmessage':
                 self._handle_pmessage(**event)
 
         self.finished.set()
@@ -344,19 +356,23 @@ class ThoonkListener(threading.Thread):
         elif channel.startswith('feed.publish'):
             #feed publish event
             id, item = data.split('\x00', 1)
-            self.emit("publish", channel.split(':', 1)[-1], item, id)
+            feed_name = channel.split(':', 1)[-1]
+            self.emit("%s publish" % feed_name, feed_name, item, id)
 
         elif channel.startswith('feed.edit'):
             #feed publish event
             id, item = data.split('\x00', 1)
-            self.emit("edit", channel.split(':', 1)[-1], item, id)
+            feed_name = channel.split(':', 1)[-1]
+            self.emit("%s edit" % feed_name, feed_name, item, id)
 
         elif channel.startswith('feed.retract'):
-            self.emit("retract", channel.split(':', 1)[-1], data)
+            feed_name = channel.split(':', 1)[-1]
+            self.emit("%s retract" % feed_name, feed_name, data)
 
         elif channel.startswith('feed.position'):
             id, rel_id = data.split('\x00', 1)
-            self.emit("position", channel.split(':', 1)[-1], id, rel_id)
+            feed_name = channel.split(':', 1)[-1]
+            self.emit("%s position" % feed_name, feed_name, id, rel_id)
 
         elif channel.startswith('job.finish'):
             id, result = data.split('\x00', 1)
