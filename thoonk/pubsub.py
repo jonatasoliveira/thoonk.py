@@ -272,6 +272,7 @@ class Thoonk(object):
         if self.listening:
             self.redis.publish(self.listener._finish_channel, "")
             self.listener.finished.wait()
+            self.listener.redis.connection_pool.disconnect()
         self.redis.connection_pool.disconnect()
 
 
