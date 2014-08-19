@@ -48,7 +48,7 @@ class Thoonk(object):
         lredis       -- A Redis connection for listening to publish events.
         port         -- The Redis server port.
         redis        -- The Redis connection instance.
-        poll         -- The pool of connections o Redis.
+        pool         -- The pool of connections o Redis.
 
     Methods:
         close             -- Terminate the listening Redis connection.
