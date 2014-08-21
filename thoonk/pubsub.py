@@ -270,7 +270,7 @@ class Thoonk(object):
     def close(self):
         """Terminate the listening Redis connection."""
         if self.listening:
-            self.redis.publish(self.listener._finish_channel, "")
+            self.redis.publish(self.listener._finish_channel, "exit")
             self.listener.finished.wait()
             self.listener.redis.connection_pool.disconnect()
         self.redis.connection_pool.disconnect()
@@ -295,7 +295,7 @@ class ThoonkListener(threading.Thread):
         self.daemon = True
 
     def finish(self):
-        self.redis.publish(self._finish_channel, "")
+        self.redis.publish(self._finish_channel, "exit")
 
     def run(self):
         """
@@ -323,7 +323,9 @@ class ThoonkListener(threading.Thread):
         self.ready.set()
         for event in self._pubsub.listen():
             event_type = event.pop("type")
-            if event["channel"] == self._finish_channel:
+            if (event["channel"] == self._finish_channel and
+                    event_type == 'message' and
+                    event["data"] == "exit"):
                 if self._pubsub.subscribed:
                     self._pubsub.unsubscribe()
             elif event_type == 'message':
